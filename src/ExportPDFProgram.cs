@@ -13,7 +13,7 @@ namespace ExportPDF
         private const string HTML_OUTRO_START2 = "<style type=\"text/css\">";
         private const string BLOCK_INTRO = "<div class=\"layout\">";
 
-        private static readonly string[] BLOCKS_TO_EXTRACT = new string[] { "Framed", "Citation", "Photo" };
+        private static readonly string[] BLOCKS_TO_EXTRACT = new string[] { "Framed", "Citation", "Photo", "Images" };
 
         private static void Main(params string[] args)
         {
@@ -28,90 +28,44 @@ namespace ExportPDF
                     continue;
                 }
 
-                using (ZipFile zipFile = new ZipFile(filePath))
+                switch (Path.GetExtension(filePath).ToLowerInvariant())
                 {
-                    bool fileFound = false;
+                    default:
+                        Console.WriteLine(Path.GetExtension(filePath).ToLowerInvariant());
+                        break;
 
-                    foreach (ZipEntry zipEntry in zipFile)
-                    {
-                        if (!zipEntry.IsFile) continue;
-#if false
-                        if (Path.GetFileName(zipEntry.Name).ToLowerInvariant().EndsWith(".pdf"))
+                    case ".htm":
+                    case ".html":
+                        DoExport(File.ReadAllText(filePath), $"{Path.GetFileNameWithoutExtension(filePath)} (trié).html");
+                        break;
+                    case ".zip":
+                        using (ZipFile zipFile = new ZipFile(filePath))
                         {
-                            PdfFocus pdfFocus = new PdfFocus();
-                            pdfFocus.OpenPdf(zipFile.GetInputStream(zipEntry));
-                            pdfFocus.WordOptions.Format = PdfFocus.CWordOptions.eWordDocument.Docx;
-                            int result = pdfFocus.ToWord($"{Path.GetFileNameWithoutExtension(filePath)}.docx");
-                            Console.WriteLine($"Exporté vers \"{Path.GetFileNameWithoutExtension(filePath)}.docx\".");
+                            bool fileFound = false;
 
-                            pdfFound = true;
-                            break;
-                        }
-#else
-                        if (Path.GetFileName(zipEntry.Name).ToLowerInvariant().EndsWith(".html"))
-                        {
-                            string html;
-                            using (Stream entryStream = zipFile.GetInputStream(zipEntry))
+                            foreach (ZipEntry zipEntry in zipFile)
                             {
-                                byte[] entryBytes = new byte[zipEntry.Size];
-                                entryStream.Read(entryBytes, 0, entryBytes.Length);
-                                html = Encoding.UTF8.GetString(entryBytes).Replace("\t", "").Replace("\r", "").Replace("\n", "");
-                            }
-
-                            string htmlIntro = html.Substring(0, html.IndexOf(HTML_INTRO_END) + HTML_INTRO_END.Length);
-                            html = html.Substring(htmlIntro.Length);
-
-                            string htmlOutro = "";
-                            if (html.Contains(HTML_OUTRO_START1))
-                                htmlOutro = html.Substring(html.IndexOf(HTML_OUTRO_START1));
-                            else if (html.Contains(HTML_OUTRO_START2))
-                                htmlOutro = html.Substring(html.IndexOf(HTML_OUTRO_START2));
-                            html = html.Substring(0, html.Length - htmlOutro.Length);
-
-                            string[] htmlBlocks = html.Split(new string[] { BLOCK_INTRO }, StringSplitOptions.None);
-                            List<string> mainBlocks = new List<string>();
-                            List<string>[] extraBlocks = new List<string>[BLOCKS_TO_EXTRACT.Length];
-                            for (int i = 0; i < BLOCKS_TO_EXTRACT.Length; i++) extraBlocks[i] = new List<string>();
-                            foreach (string htmlBlock in htmlBlocks)
-                            {
-                                bool extraBlock = false;
-                                for (int i = 0; i < BLOCKS_TO_EXTRACT.Length; i++)
+                                if (Path.GetFileName(zipEntry.Name).ToLowerInvariant().EndsWith(".html"))
                                 {
-                                    if (htmlBlock.Contains($"<h5 class=\"layout-title\">#{BLOCKS_TO_EXTRACT[i]}#</h5>"))
+                                    string html;
+                                    using (Stream entryStream = zipFile.GetInputStream(zipEntry))
                                     {
-                                        extraBlock = true;
-                                        extraBlocks[i].Add(BLOCK_INTRO + htmlBlock);
-                                        break;
+                                        byte[] entryBytes = new byte[zipEntry.Size];
+                                        entryStream.Read(entryBytes, 0, entryBytes.Length);
+                                        html = Encoding.UTF8.GetString(entryBytes).Replace("\t", "").Replace("\r", "").Replace("\n", "");
                                     }
-                                }
 
-                                if (extraBlock) continue;
-                                mainBlocks.Add(BLOCK_INTRO + htmlBlock);
+                                    DoExport(html, $"{Path.GetFileNameWithoutExtension(filePath)}.html");
+
+                                    fileFound = true;
+                                    break;
+                                }
                             }
 
-                            html = "";
-                            foreach (string block in mainBlocks)
-                                html += block;
-
-                            html += "<h4 class=\"block-title\"><em>Éléments en plus</em></h4>";
-
-                            for (int i = 0; i < BLOCKS_TO_EXTRACT.Length; i++)
-                                foreach (string block in extraBlocks[i])
-                                    html += block;
-
-                            html = htmlIntro + "\r\n\r\n" + html + "\r\n\r\n" + htmlOutro;
-
-                            File.WriteAllText($"{Path.GetFileNameWithoutExtension(filePath)}.html", html);
-                            Console.WriteLine($"Exporté vers \"{Path.GetFileNameWithoutExtension(filePath)}.html\".");
-                            
-                            fileFound = true;
-                            break;
+                            if (!fileFound)
+                                Console.WriteLine($"File \"{Path.GetFileName(filePath)}\" ne contient pas de fichier HTML.");
                         }
-#endif
-                    }
-
-                    if (!fileFound)
-                        Console.WriteLine($"File \"{Path.GetFileName(filePath)}\" ne contient pas de fichier.");
+                        break;
                 }
             }
 
@@ -122,18 +76,69 @@ namespace ExportPDF
 #endif
         }
 
-        private static string ExtractBlock(string html, string title, out string extract)
+        private static void DoExport(string html, string fileName)
         {
-            extract = "";
-            if (!html.Contains(title)) return html;
+            string htmlIntro = html.Substring(0, html.IndexOf(HTML_INTRO_END) + HTML_INTRO_END.Length);
+            html = html.Substring(htmlIntro.Length);
 
-            extract = html.Substring(html.IndexOf(title));
-            int extractLength = extract.Length;
-            if (extract.Contains("</div>")) extractLength = Math.Min(extract.IndexOf("</div>") + 6, extractLength);
-            else if (extract.Substring(1).Contains("<h4")) extractLength = Math.Min(extract.Substring(1).IndexOf("<h4") + 1, extractLength);
-            extract = extract.Substring(0, extractLength);
+            string htmlOutro = "";
+            if (html.Contains(HTML_OUTRO_START1))
+                htmlOutro = html.Substring(html.IndexOf(HTML_OUTRO_START1));
+            else if (html.Contains(HTML_OUTRO_START2))
+                htmlOutro = html.Substring(html.IndexOf(HTML_OUTRO_START2));
+            html = html.Substring(0, html.Length - htmlOutro.Length);
 
-            return html;
+            string[] htmlBlocks = html.Split(new string[] { BLOCK_INTRO }, StringSplitOptions.None);
+            List<string> mainBlocks = new List<string>();
+            List<string>[] extraBlocks = new List<string>[BLOCKS_TO_EXTRACT.Length];
+            for (int i = 0; i < BLOCKS_TO_EXTRACT.Length; i++) extraBlocks[i] = new List<string>();
+            foreach (string htmlBlock in htmlBlocks)
+            {
+                bool extraBlock = false;
+                for (int i = 0; i < BLOCKS_TO_EXTRACT.Length; i++)
+                {
+                    if (htmlBlock.Contains($"<h5 class=\"layout-title\">#{BLOCKS_TO_EXTRACT[i]}#</h5>"))
+                    {
+                        extraBlock = true;
+                        extraBlocks[i].Add(BLOCK_INTRO + htmlBlock);
+                        break;
+                    }
+                }
+
+                if (extraBlock) continue;
+                mainBlocks.Add(BLOCK_INTRO + htmlBlock);
+            }
+
+            html = "";
+            foreach (string block in mainBlocks)
+                html += block;
+
+            html += "<h4 class=\"block-title\"><em>Éléments en plus</em></h4>";
+
+            for (int i = 0; i < BLOCKS_TO_EXTRACT.Length; i++)
+                foreach (string block in extraBlocks[i])
+                    html += block;
+
+            html = htmlIntro + "\r\n\r\n" + html + "\r\n\r\n" + htmlOutro;
+
+            File.WriteAllText(fileName, html);
+            Console.WriteLine($"Exporté vers \"{fileName}\".");
         }
     }
 }
+
+/*
+ * OLD DOCX CONVERSION STUFF
+ * 
+ *                         if (Path.GetFileName(zipEntry.Name).ToLowerInvariant().EndsWith(".pdf"))
+                        {
+                            PdfFocus pdfFocus = new PdfFocus();
+                            pdfFocus.OpenPdf(zipFile.GetInputStream(zipEntry));
+                            pdfFocus.WordOptions.Format = PdfFocus.CWordOptions.eWordDocument.Docx;
+                            int result = pdfFocus.ToWord($"{Path.GetFileNameWithoutExtension(filePath)}.docx");
+                            Console.WriteLine($"Exporté vers \"{Path.GetFileNameWithoutExtension(filePath)}.docx\".");
+
+                            pdfFound = true;
+                            break;
+                        }
+*/
